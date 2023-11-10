@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package user.v1;
+
+import "google/api/annotations.proto";
+
+service UserService {
+  rpc List(ListRequest) returns (ListResponse) {
+    option (google.api.http) = {get: "/v1/users/{page=**}"};
+  }
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+}
+
+message ListRequest {
+  // The path to the page to index.
+  int32 page = 1;
+  // The maximum number of items to return.
+  int32 page_size = 2;
+}
+
+message ListResponse {
+  repeated User data = 1;
+}

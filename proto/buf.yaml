@@ -1,0 +1,10 @@
+version: v1
+deps:
+  - buf.build/googleapis/googleapis
+lint:
+  use:
+    - DEFAULT
+  rpc_allow_google_protobuf_empty_responses: true
+breaking:
+  use:
+    - WIRE_JSON
