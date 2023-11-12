@@ -53,20 +53,14 @@ func init() {
 
 func main() {
 	p := protoparse.Parser{
+		ImportPaths: []string{
+			"proto",
+			"googleapis",
+		},
 		Accessor: func(filename string) (io.ReadCloser, error) {
-			log.Info().Str("filename", filename).Send()
-
-			return ReadFileContent(fmt.Sprintf("proto/%s", filename))
+			return ReadFileContent(filename)
 		},
 	}
-
-	// files, err := p.ParseFilesButDoNotLink(
-	// 	"user/v1/user.proto",
-	// )
-	// if err != nil {
-	// 	log.Err(err).Msg("could not parse given files")
-	// 	return
-	// }
 
 	fds, err := p.ParseFiles(
 		"user/v1/user.proto",
@@ -139,6 +133,8 @@ func ReadFileContent(filePath string) (io.ReadCloser, error) {
 	if os.IsNotExist(err) {
 		return nil, os.ErrNotExist
 	}
+
+	log.Info().Str("filename", filePath).Send()
 
 	content, err := os.ReadFile(filePath)
 	if err != nil {
