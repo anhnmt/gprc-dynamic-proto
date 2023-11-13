@@ -76,6 +76,8 @@ func main() {
 		),
 	}
 
+	log.Info().Msg("Starting server on http://localhost:8080")
+
 	// run the server
 	panic(srv.ListenAndServe())
 }
