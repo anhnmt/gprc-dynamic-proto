@@ -128,18 +128,19 @@ func main() {
 	}
 	serviceDesc := name.ParentFile().Services().ByName("UserService")
 
-	remote, err := url.Parse("http://localhost:8080")
+	target, err := url.Parse("http://localhost:8080")
 	if err != nil {
 		log.Err(err).Msg("Could not parse remote")
 		return
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(remote)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	h2cHandler := h2c.NewHandler(proxy, &http2.Server{})
 
 	services := []*vanguard.Service{
 		vanguard.NewServiceWithSchema(
 			serviceDesc,
-			proxy,
+			h2cHandler,
 			vanguard.WithTypeResolver(types),
 		),
 	}
@@ -160,6 +161,8 @@ func main() {
 			&http2.Server{},
 		),
 	}
+
+	log.Info().Msg("Starting server on http://localhost:8000")
 
 	// run the server
 	panic(srv.ListenAndServe())

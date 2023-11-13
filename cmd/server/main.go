@@ -59,16 +59,7 @@ func main() {
 	// Using Vanguard, the server can also accept RESTful requests. The Vanguard
 	// Transcoder handles both REST and RPC traffic, so there's no need to mount
 	// the RPC-only handler.
-	transcoder, err := vanguard.NewTranscoder(services, vanguard.WithDefaultServiceOptions(
-		vanguard.WithTargetProtocols(
-			vanguard.ProtocolREST,
-			vanguard.ProtocolConnect,
-			vanguard.ProtocolGRPC,
-			vanguard.ProtocolGRPCWeb,
-		),
-		vanguard.WithNoTargetCompression(),
-		vanguard.WithTargetCodecs(vanguard.CodecProto, vanguard.CodecJSON),
-	))
+	transcoder, err := vanguard.NewTranscoder(services)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create transcoder")
 	}
@@ -84,6 +75,8 @@ func main() {
 			&http2.Server{},
 		),
 	}
+
+	log.Info().Msg("Starting server on http://localhost:8080")
 
 	// run the server
 	panic(srv.ListenAndServe())
