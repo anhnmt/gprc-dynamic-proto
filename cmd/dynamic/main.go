@@ -18,7 +18,9 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
-	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 func init() {
@@ -52,27 +54,44 @@ func init() {
 
 func main() {
 	compiler := protocompile.Compiler{
-		Resolver: &protocompile.SourceResolver{
+		Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
+			ImportPaths: []string{
+				"proto",
+				"googleapis",
+			},
 			Accessor: func(filename string) (io.ReadCloser, error) {
 				log.Info().Str("filename", filename).Send()
 
-				return ReadFileContent(fmt.Sprintf("proto/%v", filename))
+				return ReadFileContent(filename)
 			},
-		},
+		}),
 	}
 
-	compile, err := compiler.Compile(context.Background(), "user/v1/user.proto")
+	compile, err := compiler.Compile(context.Background(),
+		"user/v1/user.proto",
+	)
 	if err != nil {
 		log.Err(err).Msg("could not compile given files")
 		return
 	}
 
-	for _, desc := range compile {
-		protoregistry.GlobalFiles.RegisterFile(desc)
+	files := make([]*descriptorpb.FileDescriptorProto, 0)
+	for _, f := range compile {
+		f.Messages()
+		// files = append(files, f.)
 	}
 
 	path := compile.FindFileByPath("user/v1/user.proto")
 	serviceDesc := path.Services().ByName("UserService")
+
+	newFiles, err := protodesc.NewFiles(&descriptorpb.FileDescriptorSet{
+		File: files,
+	})
+	if err != nil {
+		log.Err(err).Msg("could not parse given files")
+		return
+	}
+	types := dynamicpb.NewTypes(newFiles)
 
 	remote, err := url.Parse("http://localhost:8080")
 	if err != nil {
@@ -83,7 +102,7 @@ func main() {
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 
 	services := []*vanguard.Service{
-		vanguard.NewServiceWithSchema(serviceDesc, proxy),
+		vanguard.NewServiceWithSchema(serviceDesc, proxy, vanguard.WithTypeResolver(types)),
 	}
 
 	transcoder, err := vanguard.NewTranscoder(services)
