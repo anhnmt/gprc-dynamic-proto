@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 	"time"
 
 	"connectrpc.com/vanguard"
-	"github.com/bufbuild/protocompile"
+	"github.com/jhump/protoreflect/desc/protoparse"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
@@ -53,45 +52,81 @@ func init() {
 }
 
 func main() {
-	compiler := protocompile.Compiler{
-		Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
-			ImportPaths: []string{
-				"proto",
-				"googleapis",
-			},
-			Accessor: func(filename string) (io.ReadCloser, error) {
-				log.Info().Str("filename", filename).Send()
+	// compiler := protocompile.Compiler{
+	// 	Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
+	// 		ImportPaths: []string{
+	// 			"proto",
+	// 			"googleapis",
+	// 		},
+	// 		Accessor: func(filename string) (io.ReadCloser, error) {
+	// 			log.Info().Str("filename", filename).Send()
+	//
+	// 			return ReadFileContent(filename)
+	// 		},
+	// 	}),
+	// }
+	//
+	// compile, err := compiler.Compile(context.Background(), files...)
+	// if err != nil {
+	// 	log.Err(err).Msg("could not compile given files")
+	// 	return
+	// }
+	//
+	// fileDescriptors := make([]*descriptorpb.FileDescriptorProto, 0)
+	// for _, fds := range compile {
+	// 	res, ok := fds.(linker.Result)
+	// 	if ok {
+	// 		fileDescriptors = append(fileDescriptors, res.FileDescriptorProto())
+	// 	}
+	// }
+	//
+	// path := compile.FindFileByPath("user/v1/user.proto")
+	// serviceDesc := path.Services().ByName("UserService")
 
-				return ReadFileContent(filename)
-			},
-		}),
+	googleapis := []string{
+		"google/api/annotations.proto",
+		"google/api/http.proto",
+		"google/protobuf/descriptor.proto",
 	}
 
-	compile, err := compiler.Compile(context.Background(),
-		"user/v1/user.proto",
-	)
+	files := append(googleapis, "user/v1/user.proto")
+
+	p := protoparse.Parser{
+		ImportPaths: []string{
+			"proto",
+			"googleapis",
+		},
+		Accessor: func(filename string) (io.ReadCloser, error) {
+			return ReadFileContent(filename)
+		},
+	}
+
+	fds, err := p.ParseFiles(files...)
 	if err != nil {
-		log.Err(err).Msg("could not compile given files")
+		log.Err(err).Msg("could not parse given files")
 		return
 	}
 
-	files := make([]*descriptorpb.FileDescriptorProto, 0)
-	for _, f := range compile {
-		f.Messages()
-		// files = append(files, f.)
+	fileDescriptors := make([]*descriptorpb.FileDescriptorProto, 0)
+	for _, fd := range fds {
+		fileDescriptors = append(fileDescriptors, fd.AsFileDescriptorProto())
 	}
 
-	path := compile.FindFileByPath("user/v1/user.proto")
-	serviceDesc := path.Services().ByName("UserService")
-
 	newFiles, err := protodesc.NewFiles(&descriptorpb.FileDescriptorSet{
-		File: files,
+		File: fileDescriptors,
 	})
 	if err != nil {
 		log.Err(err).Msg("could not parse given files")
 		return
 	}
+
 	types := dynamicpb.NewTypes(newFiles)
+
+	name, err := newFiles.FindDescriptorByName("user.v1.UserService")
+	if err != nil {
+		return
+	}
+	serviceDesc := name.ParentFile().Services().ByName("UserService")
 
 	remote, err := url.Parse("http://localhost:8080")
 	if err != nil {
@@ -102,7 +137,11 @@ func main() {
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 
 	services := []*vanguard.Service{
-		vanguard.NewServiceWithSchema(serviceDesc, proxy, vanguard.WithTypeResolver(types)),
+		vanguard.NewServiceWithSchema(
+			serviceDesc,
+			proxy,
+			vanguard.WithTypeResolver(types),
+		),
 	}
 
 	transcoder, err := vanguard.NewTranscoder(services)

@@ -62,37 +62,38 @@ func main() {
 		},
 	}
 
-	fds, err := p.ParseFiles(
-		"user/v1/user.proto",
+	googleapis := []string{
 		"google/api/annotations.proto",
 		"google/api/http.proto",
 		"google/protobuf/descriptor.proto",
-	)
+	}
+
+	files := append(googleapis, "user/v1/user.proto")
+
+	fds, err := p.ParseFiles(files...)
 	if err != nil {
 		log.Err(err).Msg("could not parse given files")
 		return
 	}
 
-	files := make([]*descriptorpb.FileDescriptorProto, 0)
+	fileDescriptors := make([]*descriptorpb.FileDescriptorProto, 0)
 	for _, fd := range fds {
-		files = append(files, fd.AsFileDescriptorProto())
+		fileDescriptors = append(fileDescriptors, fd.AsFileDescriptorProto())
 	}
 
 	newFiles, err := protodesc.NewFiles(&descriptorpb.FileDescriptorSet{
-		File: files,
+		File: fileDescriptors,
 	})
 	if err != nil {
 		log.Err(err).Msg("could not parse given files")
 		return
 	}
 
-	path, err := newFiles.FindFileByPath("user/v1/user.proto")
+	name, err := newFiles.FindDescriptorByName("user.v1.UserService")
 	if err != nil {
-		log.Err(err).Msg("could not parse given files")
 		return
 	}
-
-	serviceDesc := path.Services().ByName("UserService")
+	serviceDesc := name.ParentFile().Services().ByName("UserService")
 	types := dynamicpb.NewTypes(newFiles)
 
 	remote, err := url.Parse("http://localhost:8080")
@@ -104,7 +105,11 @@ func main() {
 	proxy := httputil.NewSingleHostReverseProxy(remote)
 
 	services := []*vanguard.Service{
-		vanguard.NewServiceWithSchema(serviceDesc, proxy, vanguard.WithTypeResolver(types)),
+		vanguard.NewServiceWithSchema(
+			serviceDesc,
+			proxy,
+			vanguard.WithTypeResolver(types),
+		),
 	}
 
 	transcoder, err := vanguard.NewTranscoder(services)
