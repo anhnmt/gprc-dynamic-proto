@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -128,13 +131,16 @@ func main() {
 	}
 	serviceDesc := name.ParentFile().Services().ByName("UserService")
 
-	target, err := url.Parse("http://localhost:8080")
-	if err != nil {
-		log.Err(err).Msg("Could not parse remote")
-		return
+	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "localhost:8080"})
+	proxy.Transport = &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			// If you're also using this client for non-h2c traffic, you may want
+			// to delegate to tls.Dial if the network isn't TCP or the addr isn't
+			// in an allowlist.
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		},
 	}
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
 	h2cHandler := h2c.NewHandler(proxy, &http2.Server{})
 
 	services := []*vanguard.Service{
