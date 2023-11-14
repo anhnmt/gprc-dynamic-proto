@@ -6,7 +6,7 @@ import "google/api/annotations.proto";
 
 service UserService {
   rpc List(ListRequest) returns (ListResponse) {
-    option (google.api.http) = {get: "/v1/users/{page=**}"};
+    option (google.api.http) = {get: "/v1/users/{page=*}"};
   }
 }
 

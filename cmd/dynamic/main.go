@@ -20,8 +20,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
-	"google.golang.org/protobuf/reflect/protodesc"
-	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
@@ -55,6 +54,14 @@ func init() {
 }
 
 func main() {
+	googleapis := []string{
+		"google/api/annotations.proto",
+		"google/api/http.proto",
+		"google/protobuf/descriptor.proto",
+	}
+
+	files := append(googleapis, "user/v1/user.proto")
+
 	// compiler := protocompile.Compiler{
 	// 	Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
 	// 		ImportPaths: []string{
@@ -86,14 +93,6 @@ func main() {
 	// path := compile.FindFileByPath("user/v1/user.proto")
 	// serviceDesc := path.Services().ByName("UserService")
 
-	googleapis := []string{
-		"google/api/annotations.proto",
-		"google/api/http.proto",
-		"google/protobuf/descriptor.proto",
-	}
-
-	files := append(googleapis, "user/v1/user.proto")
-
 	p := protoparse.Parser{
 		ImportPaths: []string{
 			"proto",
@@ -110,26 +109,21 @@ func main() {
 		return
 	}
 
-	fileDescriptors := make([]*descriptorpb.FileDescriptorProto, 0)
-	for _, fd := range fds {
-		fileDescriptors = append(fileDescriptors, fd.AsFileDescriptorProto())
+	resolver := &protoregistry.Files{}
+	for _, fileDesc := range fds {
+		if err = resolver.RegisterFile(fileDesc.UnwrapFile()); err != nil {
+			log.Err(err).Msg("could not register given files")
+			return
+		}
 	}
+	types := dynamicpb.NewTypes(resolver)
 
-	newFiles, err := protodesc.NewFiles(&descriptorpb.FileDescriptorSet{
-		File: fileDescriptors,
-	})
+	path, err := resolver.FindFileByPath("user/v1/user.proto")
 	if err != nil {
-		log.Err(err).Msg("could not parse given files")
+		log.Err(err).Msg("could not find given files")
 		return
 	}
-
-	types := dynamicpb.NewTypes(newFiles)
-
-	name, err := newFiles.FindDescriptorByName("user.v1.UserService")
-	if err != nil {
-		return
-	}
-	serviceDesc := name.ParentFile().Services().ByName("UserService")
+	serviceDesc := path.Services().ByName("UserService")
 
 	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "localhost:8080"})
 	proxy.Transport = &http2.Transport{
