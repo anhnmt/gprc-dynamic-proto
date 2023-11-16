@@ -14,9 +14,6 @@ p := protoparse.Parser{
         "proto",
         "googleapis",
     },
-    Accessor: func(filename string) (io.ReadCloser, error) {
-        return ReadFileContent(filename)
-    },
 }
 
 fds, err := p.ParseFiles(files...)
@@ -32,14 +29,12 @@ for _, fileDesc := range fds {
         return
     }
 }
-types := dynamicpb.NewTypes(resolver)
 
 path, err := resolver.FindFileByPath("user/v1/user.proto")
 if err != nil {
     log.Err(err).Msg("could not find given files")
     return
 }
-serviceDesc := path.Services().ByName("UserService")
 ```
 
 - Initialize reverse proxy
@@ -60,11 +55,23 @@ proxy.Transport = &http2.Transport{
 - Declare a new service
 
 ```go
-vanguard.NewServiceWithSchema(
-    serviceDesc,
-    proxy,
+types := dynamicpb.NewTypes(resolver)
+svcOpts := []vanguard.ServiceOption{
     vanguard.WithTypeResolver(types),
-),
+}
+
+services := make([]*vanguard.Service, 0)
+svcDescs := path.Services()
+
+for i := 0; i < svcDescs.Len(); i++ {
+    svc := vanguard.NewServiceWithSchema(
+        svcDescs.Get(i),
+        proxy,
+        svcOpts...,
+    )
+
+    services = append(services, svc)
+}
 ```
 
 # Special thanks to
