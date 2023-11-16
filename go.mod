@@ -5,6 +5,7 @@ go 1.21
 require (
 	connectrpc.com/connect v1.12.0
 	connectrpc.com/vanguard v0.1.0
+	github.com/bufbuild/protocompile v0.6.0
 	github.com/jhump/protoreflect v1.15.3
 	github.com/rs/zerolog v1.31.0
 	golang.org/x/net v0.18.0
@@ -14,7 +15,6 @@ require (
 )
 
 require (
-	github.com/bufbuild/protocompile v0.6.0 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
