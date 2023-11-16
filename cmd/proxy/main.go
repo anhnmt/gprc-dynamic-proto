@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -62,44 +61,10 @@ func main() {
 
 	files := append(googleapis, "user/v1/user.proto")
 
-	// compiler := protocompile.Compiler{
-	// 	Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
-	// 		ImportPaths: []string{
-	// 			"proto",
-	// 			"googleapis",
-	// 		},
-	// 		Accessor: func(filename string) (io.ReadCloser, error) {
-	// 			log.Info().Str("filename", filename).Send()
-	//
-	// 			return ReadFileContent(filename)
-	// 		},
-	// 	}),
-	// }
-	//
-	// compile, err := compiler.Compile(context.Background(), files...)
-	// if err != nil {
-	// 	log.Err(err).Msg("could not compile given files")
-	// 	return
-	// }
-	//
-	// fileDescriptors := make([]*descriptorpb.FileDescriptorProto, 0)
-	// for _, fds := range compile {
-	// 	res, ok := fds.(linker.Result)
-	// 	if ok {
-	// 		fileDescriptors = append(fileDescriptors, res.FileDescriptorProto())
-	// 	}
-	// }
-	//
-	// path := compile.FindFileByPath("user/v1/user.proto")
-	// serviceDesc := path.Services().ByName("UserService")
-
 	p := protoparse.Parser{
 		ImportPaths: []string{
 			"proto",
 			"googleapis",
-		},
-		Accessor: func(filename string) (io.ReadCloser, error) {
-			return ReadFileContent(filename)
 		},
 	}
 
@@ -116,14 +81,12 @@ func main() {
 			return
 		}
 	}
-	types := dynamicpb.NewTypes(resolver)
 
 	path, err := resolver.FindFileByPath("user/v1/user.proto")
 	if err != nil {
 		log.Err(err).Msg("could not find given files")
 		return
 	}
-	serviceDesc := path.Services().ByName("UserService")
 
 	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "localhost:8080"})
 	proxy.Transport = &http2.Transport{
@@ -135,14 +98,23 @@ func main() {
 			return (&net.Dialer{}).DialContext(ctx, network, addr)
 		},
 	}
-	// h2cHandler := h2c.NewHandler(proxy, &http2.Server{})
 
-	services := []*vanguard.Service{
-		vanguard.NewServiceWithSchema(
-			serviceDesc,
+	types := dynamicpb.NewTypes(resolver)
+	svcOpts := []vanguard.ServiceOption{
+		vanguard.WithTypeResolver(types),
+	}
+
+	services := make([]*vanguard.Service, 0)
+	svcDescs := path.Services()
+
+	for i := 0; i < svcDescs.Len(); i++ {
+		svc := vanguard.NewServiceWithSchema(
+			svcDescs.Get(i),
 			proxy,
-			vanguard.WithTypeResolver(types),
-		),
+			svcOpts...,
+		)
+
+		services = append(services, svc)
 	}
 
 	transcoder, err := vanguard.NewTranscoder(services)
@@ -166,19 +138,4 @@ func main() {
 
 	// run the server
 	panic(srv.ListenAndServe())
-}
-
-func ReadFileContent(filePath string) (io.ReadCloser, error) {
-	_, err := os.Stat(filePath)
-	if os.IsNotExist(err) {
-		return nil, os.ErrNotExist
-	}
-
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	readCloser := io.NopCloser(bytes.NewReader(content))
-	return readCloser, nil
 }
