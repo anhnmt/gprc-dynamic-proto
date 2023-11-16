@@ -135,12 +135,12 @@ func main() {
 			return (&net.Dialer{}).DialContext(ctx, network, addr)
 		},
 	}
-	h2cHandler := h2c.NewHandler(proxy, &http2.Server{})
+	// h2cHandler := h2c.NewHandler(proxy, &http2.Server{})
 
 	services := []*vanguard.Service{
 		vanguard.NewServiceWithSchema(
 			serviceDesc,
-			h2cHandler,
+			proxy,
 			vanguard.WithTypeResolver(types),
 		),
 	}
@@ -176,7 +176,7 @@ func ReadFileContent(filePath string) (io.ReadCloser, error) {
 
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, os.ErrNotExist
+		return nil, err
 	}
 
 	readCloser := io.NopCloser(bytes.NewReader(content))
