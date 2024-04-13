@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	connectrpc.com/connect v1.16.0
+	connectrpc.com/grpcreflect v1.2.0
 	connectrpc.com/vanguard v0.1.0
 	github.com/bufbuild/protocompile v0.10.0
 	github.com/jhump/protoreflect v1.16.0

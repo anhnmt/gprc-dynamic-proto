@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"connectrpc.com/grpcreflect"
 	"connectrpc.com/vanguard"
 	"github.com/jhump/protoreflect/desc/protoparse"
 	"github.com/rs/zerolog"
@@ -53,14 +54,6 @@ func init() {
 }
 
 func main() {
-	googleapis := []string{
-		"google/api/annotations.proto",
-		"google/api/http.proto",
-		"google/protobuf/descriptor.proto",
-	}
-
-	files := append(googleapis, "user/v1/user.proto")
-
 	p := protoparse.Parser{
 		ImportPaths: []string{
 			"proto",
@@ -68,21 +61,21 @@ func main() {
 		},
 	}
 
-	fds, err := p.ParseFiles(files...)
+	fds, err := p.ParseFiles("user/v1/user.proto")
 	if err != nil {
 		log.Err(err).Msg("could not parse given files")
 		return
 	}
 
-	resolver := &protoregistry.Files{}
+	// resolver := protoregistry.GlobalFiles
 	for _, fileDesc := range fds {
-		if err = resolver.RegisterFile(fileDesc.UnwrapFile()); err != nil {
+		if err = protoregistry.GlobalFiles.RegisterFile(fileDesc.UnwrapFile()); err != nil {
 			log.Err(err).Msg("could not register given files")
 			return
 		}
 	}
 
-	path, err := resolver.FindFileByPath("user/v1/user.proto")
+	path, err := protoregistry.GlobalFiles.FindFileByPath("user/v1/user.proto")
 	if err != nil {
 		log.Err(err).Msg("could not find given files")
 		return
@@ -99,7 +92,7 @@ func main() {
 		},
 	}
 
-	types := dynamicpb.NewTypes(resolver)
+	types := dynamicpb.NewTypes(protoregistry.GlobalFiles)
 	svcOpts := []vanguard.ServiceOption{
 		vanguard.WithTypeResolver(types),
 	}
@@ -107,14 +100,17 @@ func main() {
 	services := make([]*vanguard.Service, 0)
 	svcDescs := path.Services()
 
-	for i := 0; i < svcDescs.Len(); i++ {
-		svc := vanguard.NewServiceWithSchema(
-			svcDescs.Get(i),
-			proxy,
-			svcOpts...,
-		)
-
-		services = append(services, svc)
+	serviceNames := make([]string, 0, svcDescs.Len())
+	if svcDescs.Len() > 0 {
+		for i := 0; i < svcDescs.Len(); i++ {
+			svc := vanguard.NewServiceWithSchema(
+				svcDescs.Get(i),
+				proxy,
+				svcOpts...,
+			)
+			services = append(services, svc)
+			serviceNames = append(serviceNames, string(svcDescs.Get(i).FullName()))
+		}
 	}
 
 	transcoder, err := vanguard.NewTranscoder(services)
@@ -123,13 +119,28 @@ func main() {
 		return
 	}
 
+	reflector := grpcreflect.NewStaticReflector(
+		serviceNames...,
+	)
+
+	// reflector := grpcreflect.NewStaticReflector(
+	//     userv1connect.UserServiceName,
+	// )
+
+	mux := http.NewServeMux()
+	mux.Handle(grpcreflect.NewHandlerV1(reflector))
+	// Many tools still expect the older version of the server reflection API, so
+	// most servers should mount both handlers.
+	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
+	mux.Handle("/", transcoder)
+
 	addr := fmt.Sprintf(":%d", 8000)
 
 	// create new http server
 	srv := &http.Server{
 		Addr: addr,
 		Handler: h2c.NewHandler(
-			transcoder,
+			mux,
 			&http2.Server{},
 		),
 	}

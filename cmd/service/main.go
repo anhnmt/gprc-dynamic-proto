@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"connectrpc.com/grpcreflect"
 	"connectrpc.com/vanguard"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -69,6 +70,17 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to create transcoder")
 	}
 
+	reflector := grpcreflect.NewStaticReflector(
+		userv1connect.UserServiceName,
+	)
+
+	mux := http.NewServeMux()
+	mux.Handle(grpcreflect.NewHandlerV1(reflector))
+	// Many tools still expect the older version of the server reflection API, so
+	// most servers should mount both handlers.
+	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
+	mux.Handle("/", transcoder)
+
 	// create new http server
 	srv := &http.Server{
 		Addr: ":8080",
@@ -76,7 +88,7 @@ func main() {
 		// so we can handle gRPC requests, which requires HTTP/2, in
 		// addition to Connect and gRPC-Web (which work with HTTP 1.1).
 		Handler: h2c.NewHandler(
-			transcoder,
+			mux,
 			&http2.Server{},
 		),
 	}
