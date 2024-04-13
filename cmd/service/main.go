@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -15,6 +19,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	userv1 "github.com/anhnmt/gprc-dynamic-proto/proto/gengo/user/v1"
 	"github.com/anhnmt/gprc-dynamic-proto/proto/gengo/user/v1/userv1connect"
@@ -96,4 +101,66 @@ func (s *UserService) List(context.Context, *connect.Request[userv1.ListRequest]
 	return connect.NewResponse(&userv1.ListResponse{
 		Data: nil,
 	}), nil
+}
+
+func ConvertBytesToFile(data []byte, filename string) (*os.File, error) {
+	file, err := os.Create(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = file.Write(data)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return file, nil
+}
+
+func (s *UserService) Upload(_ context.Context, req *connect.Request[userv1.UploadRequest]) (*connect.Response[emptypb.Empty], error) {
+	file := req.Msg.GetFile()
+
+	res := connect.NewResponse(&emptypb.Empty{})
+
+	mediaType, params, err := mime.ParseMediaType(file.GetContentType())
+	if err != nil {
+		return res, err
+	}
+
+	buf := bytes.NewReader(file.GetData())
+
+	if strings.HasPrefix(mediaType, "multipart/") {
+		mr := multipart.NewReader(buf, params["boundary"])
+		for {
+			p, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return res, err
+			}
+			slurp, err := io.ReadAll(p)
+			if err != nil {
+				return res, err
+			}
+
+			newFile, err := ConvertBytesToFile(slurp, p.FileName())
+			if err != nil {
+				fmt.Println("Lỗi:", err)
+				return res, nil
+			}
+			defer newFile.Close()
+		}
+	}
+
+	log.Info().
+		Str("contentType", file.GetContentType()).
+		Send()
+
+	return res, nil
 }

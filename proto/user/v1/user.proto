@@ -3,11 +3,28 @@ syntax = "proto3";
 package user.v1;
 
 import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "google/protobuf/empty.proto";
 
 service UserService {
   rpc List(ListRequest) returns (ListResponse) {
     option (google.api.http) = {get: "/v1/users/{page=*}"};
   }
+
+    // Upload a file to the given path.
+  rpc Upload(UploadRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      post: "/user.v1.UserService/Upload"
+      body: "file"
+    };
+  }
+}
+
+message UploadRequest {
+  // The path to the file to upload.
+  string filename = 1;
+  // The file contents to upload.
+  google.api.HttpBody file = 2;
 }
 
 message User {

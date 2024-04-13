@@ -9,6 +9,7 @@ import (
 	context "context"
 	errors "errors"
 	v1 "github.com/anhnmt/gprc-dynamic-proto/proto/gengo/user/v1"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	http "net/http"
 	strings "strings"
 )
@@ -35,11 +36,15 @@ const (
 const (
 	// UserServiceListProcedure is the fully-qualified name of the UserService's List RPC.
 	UserServiceListProcedure = "/user.v1.UserService/List"
+	// UserServiceUploadProcedure is the fully-qualified name of the UserService's Upload RPC.
+	UserServiceUploadProcedure = "/user.v1.UserService/Upload"
 )
 
 // UserServiceClient is a client for the user.v1.UserService service.
 type UserServiceClient interface {
 	List(context.Context, *connect.Request[v1.ListRequest]) (*connect.Response[v1.ListResponse], error)
+	// Upload a file to the given path.
+	Upload(context.Context, *connect.Request[v1.UploadRequest]) (*connect.Response[emptypb.Empty], error)
 }
 
 // NewUserServiceClient constructs a client for the user.v1.UserService service. By default, it uses
@@ -57,12 +62,18 @@ func NewUserServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			baseURL+UserServiceListProcedure,
 			opts...,
 		),
+		upload: connect.NewClient[v1.UploadRequest, emptypb.Empty](
+			httpClient,
+			baseURL+UserServiceUploadProcedure,
+			opts...,
+		),
 	}
 }
 
 // userServiceClient implements UserServiceClient.
 type userServiceClient struct {
-	list *connect.Client[v1.ListRequest, v1.ListResponse]
+	list   *connect.Client[v1.ListRequest, v1.ListResponse]
+	upload *connect.Client[v1.UploadRequest, emptypb.Empty]
 }
 
 // List calls user.v1.UserService.List.
@@ -70,9 +81,16 @@ func (c *userServiceClient) List(ctx context.Context, req *connect.Request[v1.Li
 	return c.list.CallUnary(ctx, req)
 }
 
+// Upload calls user.v1.UserService.Upload.
+func (c *userServiceClient) Upload(ctx context.Context, req *connect.Request[v1.UploadRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.upload.CallUnary(ctx, req)
+}
+
 // UserServiceHandler is an implementation of the user.v1.UserService service.
 type UserServiceHandler interface {
 	List(context.Context, *connect.Request[v1.ListRequest]) (*connect.Response[v1.ListResponse], error)
+	// Upload a file to the given path.
+	Upload(context.Context, *connect.Request[v1.UploadRequest]) (*connect.Response[emptypb.Empty], error)
 }
 
 // NewUserServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -86,10 +104,17 @@ func NewUserServiceHandler(svc UserServiceHandler, opts ...connect.HandlerOption
 		svc.List,
 		opts...,
 	)
+	userServiceUploadHandler := connect.NewUnaryHandler(
+		UserServiceUploadProcedure,
+		svc.Upload,
+		opts...,
+	)
 	return "/user.v1.UserService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case UserServiceListProcedure:
 			userServiceListHandler.ServeHTTP(w, r)
+		case UserServiceUploadProcedure:
+			userServiceUploadHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -101,4 +126,8 @@ type UnimplementedUserServiceHandler struct{}
 
 func (UnimplementedUserServiceHandler) List(context.Context, *connect.Request[v1.ListRequest]) (*connect.Response[v1.ListResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("user.v1.UserService.List is not implemented"))
+}
+
+func (UnimplementedUserServiceHandler) Upload(context.Context, *connect.Request[v1.UploadRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("user.v1.UserService.Upload is not implemented"))
 }
