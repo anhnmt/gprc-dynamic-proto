@@ -13,13 +13,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"connectrpc.com/grpcreflect"
 	"connectrpc.com/vanguard"
-	"github.com/jhump/protoreflect/desc/protoparse"
+	"github.com/jhump/protoreflect/grpcreflect"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
@@ -53,34 +54,26 @@ func init() {
 	zerolog.DefaultContextLogger = &l
 }
 
+// protocompile is tested
 func main() {
-	p := protoparse.Parser{
-		ImportPaths: []string{
-			"proto",
-			"googleapis",
-		},
-	}
+	target := &url.URL{Scheme: "http", Host: "localhost:8080"}
 
-	fds, err := p.ParseFiles("user/v1/user.proto")
+	cconn, err := grpc.Dial(target.Host, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Err(err).Msg("could not parse given files")
+		panic(fmt.Sprintf("Failed to create grpc client: %s", err.Error()))
+	}
+	defer func() {
+		_ = cconn.Close()
+	}()
+
+	client := grpcreflect.NewClientAuto(context.Background(), cconn)
+	listServices, err := client.ListServices()
+	if err != nil {
+		log.Err(err).Msg("could not list services")
 		return
 	}
 
-	for _, fileDesc := range fds {
-		if err = protoregistry.GlobalFiles.RegisterFile(fileDesc.UnwrapFile()); err != nil {
-			log.Err(err).Msg("could not register given files")
-			return
-		}
-	}
-
-	path, err := protoregistry.GlobalFiles.FindFileByPath("user/v1/user.proto")
-	if err != nil {
-		log.Err(err).Msg("could not find given files")
-		return
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "localhost:8080"})
+	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = &http2.Transport{
 		AllowHTTP: true,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
@@ -97,19 +90,29 @@ func main() {
 	}
 
 	services := make([]*vanguard.Service, 0)
-	svcDescs := path.Services()
+	for _, service := range listServices {
+		desc, err := client.FileContainingSymbol(service)
+		if err != nil {
+			return
+		}
 
-	serviceNames := make([]string, 0, svcDescs.Len())
-	if svcDescs.Len() > 0 {
+		fileDesc := desc.UnwrapFile()
+		if err = protoregistry.GlobalFiles.RegisterFile(fileDesc); err != nil {
+			log.Err(err).Msg("could not register given files")
+			return
+		}
+
+		svcDescs := fileDesc.Services()
 		for i := 0; i < svcDescs.Len(); i++ {
 			svc := vanguard.NewServiceWithSchema(
 				svcDescs.Get(i),
 				proxy,
 				svcOpts...,
 			)
+
 			services = append(services, svc)
-			serviceNames = append(serviceNames, string(svcDescs.Get(i).FullName()))
 		}
+
 	}
 
 	transcoder, err := vanguard.NewTranscoder(services)
@@ -118,28 +121,13 @@ func main() {
 		return
 	}
 
-	reflector := grpcreflect.NewStaticReflector(
-		serviceNames...,
-	)
-
-	// reflector := grpcreflect.NewStaticReflector(
-	//     userv1connect.UserServiceName,
-	// )
-
-	mux := http.NewServeMux()
-	mux.Handle(grpcreflect.NewHandlerV1(reflector))
-	// Many tools still expect the older version of the server reflection API, so
-	// most servers should mount both handlers.
-	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
-	mux.Handle("/", transcoder)
-
 	addr := fmt.Sprintf(":%d", 8000)
 
 	// create new http server
 	srv := &http.Server{
 		Addr: addr,
 		Handler: h2c.NewHandler(
-			mux,
+			transcoder,
 			&http2.Server{},
 		),
 	}

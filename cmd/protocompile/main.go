@@ -54,14 +54,6 @@ func init() {
 
 // protocompile is tested
 func main() {
-	googleapis := []string{
-		"google/api/annotations.proto",
-		"google/api/http.proto",
-		"google/protobuf/descriptor.proto",
-	}
-
-	files := append(googleapis, "user/v1/user.proto")
-
 	// protocompile not support http rule
 	compiler := protocompile.Compiler{
 		Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
@@ -72,21 +64,20 @@ func main() {
 		}),
 	}
 
-	compile, err := compiler.Compile(context.Background(), files...)
+	compile, err := compiler.Compile(context.Background(), "user/v1/user.proto")
 	if err != nil {
 		log.Err(err).Msg("could not compile given files")
 		return
 	}
 
-	resolver := &protoregistry.Files{}
 	for _, fileDesc := range compile {
-		if err = resolver.RegisterFile(fileDesc); err != nil {
+		if err = protoregistry.GlobalFiles.RegisterFile(fileDesc); err != nil {
 			log.Err(err).Msg("could not register given files")
 			return
 		}
 	}
 
-	path, err := resolver.FindFileByPath("user/v1/user.proto")
+	path, err := protoregistry.GlobalFiles.FindFileByPath("user/v1/user.proto")
 	if err != nil {
 		log.Err(err).Msg("could not find given files")
 		return
@@ -103,7 +94,7 @@ func main() {
 		},
 	}
 
-	types := dynamicpb.NewTypes(resolver)
+	types := dynamicpb.NewTypes(protoregistry.GlobalFiles)
 	svcOpts := []vanguard.ServiceOption{
 		vanguard.WithTypeResolver(types),
 	}
