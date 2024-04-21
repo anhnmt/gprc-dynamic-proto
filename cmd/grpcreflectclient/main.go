@@ -13,14 +13,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"connectrpc.com/grpcreflect"
 	"connectrpc.com/vanguard"
-	"github.com/jhump/protoreflect/grpcreflect"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
@@ -58,23 +57,7 @@ func init() {
 func main() {
 	target := &url.URL{Scheme: "http", Host: "localhost:8080"}
 
-	cconn, err := grpc.Dial(target.Host, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		panic(fmt.Sprintf("Failed to create grpc client: %s", err.Error()))
-	}
-	defer func() {
-		_ = cconn.Close()
-	}()
-
-	client := grpcreflect.NewClientAuto(context.Background(), cconn)
-	listServices, err := client.ListServices()
-	if err != nil {
-		log.Err(err).Msg("could not list services")
-		return
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Transport = &http2.Transport{
+	transport := &http2.Transport{
 		AllowHTTP: true,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 			// If you're also using this client for non-h2c traffic, you may want
@@ -84,33 +67,63 @@ func main() {
 		},
 	}
 
+	httpClient := &http.Client{
+		Transport: transport,
+	}
+	client := grpcreflect.NewClient(httpClient, target.String())
+	// Create a new reflection stream.
+	stream := client.NewStream(context.Background())
+	defer stream.Close()
+
+	names, err := stream.ListServices()
+	if err != nil {
+		log.Printf("error listing services: %v", err)
+		return
+	}
+
 	types := dynamicpb.NewTypes(protoregistry.GlobalFiles)
 	svcOpts := []vanguard.ServiceOption{
 		vanguard.WithTypeResolver(types),
 	}
 
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = transport
+
 	services := make([]*vanguard.Service, 0)
-	for _, service := range listServices {
-		desc, err := client.FileContainingSymbol(service)
+	for _, service := range names {
+		fileDescs, err := stream.FileContainingSymbol(service)
 		if err != nil {
 			return
 		}
 
-		fileDesc := desc.UnwrapFile()
-		if err = protoregistry.GlobalFiles.RegisterFile(fileDesc); err != nil {
-			log.Err(err).Msg("could not register given files")
-			return
+		l := len(fileDescs)
+		if l == 0 {
+			continue
 		}
 
-		svcDescs := fileDesc.Services()
-		for i := 0; i < svcDescs.Len(); i++ {
-			svc := vanguard.NewServiceWithSchema(
-				svcDescs.Get(i),
-				proxy,
-				svcOpts...,
-			)
+		for i := l - 1; i >= 0; i-- {
+			desc := fileDescs[i]
+			file, err := protodesc.NewFile(desc, protoregistry.GlobalFiles)
+			if err != nil {
+				log.Err(err).Msg("could not create file")
+				return
+			}
 
-			services = append(services, svc)
+			if err = protoregistry.GlobalFiles.RegisterFile(file); err != nil {
+				log.Err(err).Msg("could not register given files")
+				return
+			}
+
+			svcDescs := file.Services()
+			for i := 0; i < svcDescs.Len(); i++ {
+				svc := vanguard.NewServiceWithSchema(
+					svcDescs.Get(i),
+					proxy,
+					svcOpts...,
+				)
+
+				services = append(services, svc)
+			}
 		}
 
 	}

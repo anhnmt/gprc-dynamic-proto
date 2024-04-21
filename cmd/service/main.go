@@ -76,9 +76,6 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle(grpcreflect.NewHandlerV1(reflector))
-	// Many tools still expect the older version of the server reflection API, so
-	// most servers should mount both handlers.
-	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
 	mux.Handle("/", transcoder)
 
 	// create new http server
