@@ -76,6 +76,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle(grpcreflect.NewHandlerV1(reflector))
+	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
 	mux.Handle("/", transcoder)
 
 	// create new http server
