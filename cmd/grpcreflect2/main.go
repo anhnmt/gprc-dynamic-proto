@@ -13,13 +13,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"connectrpc.com/grpcreflect"
 	"connectrpc.com/vanguard"
+	"github.com/jhump/protoreflect/grpcreflect"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
-	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
@@ -51,33 +52,30 @@ func init() {
 
 	log.Logger = l
 	zerolog.DefaultContextLogger = &l
+
+	os.Setenv("GOLANG_PROTOBUF_REGISTRATION_CONFLICT", "ignore")
 }
 
 // protocompile is tested
 func main() {
-	target := &url.URL{Scheme: "http", Host: "localhost:8080"}
-
-	transport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			// If you're also using this client for non-h2c traffic, you may want
-			// to delegate to tls.Dial if the network isn't TCP or the addr isn't
-			// in an allowlist.
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
-		},
+	target := &url.URL{
+		Scheme: "http",
+		// Host:   "localhost:8080",
+		Host: "192.168.24.218:8000",
 	}
 
-	httpClient := &http.Client{
-		Transport: transport,
-	}
-	client := grpcreflect.NewClient(httpClient, target.String())
-	// Create a new reflection stream.
-	stream := client.NewStream(context.Background())
-	defer stream.Close()
-
-	names, err := stream.ListServices()
+	cconn, err := grpc.Dial(target.Host, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Printf("error listing services: %v", err)
+		panic(fmt.Sprintf("Failed to create grpc client: %s", err.Error()))
+	}
+	defer func() {
+		_ = cconn.Close()
+	}()
+
+	client := grpcreflect.NewClientAuto(context.Background(), cconn)
+	listServices, err := client.ListServices()
+	if err != nil {
+		log.Err(err).Msg("could not list services")
 		return
 	}
 
@@ -87,43 +85,38 @@ func main() {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Transport = transport
+	proxy.Transport = &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			// If you're also using this client for non-h2c traffic, you may want
+			// to delegate to tls.Dial if the network isn't TCP or the addr isn't
+			// in an allowlist.
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		},
+	}
 
 	services := make([]*vanguard.Service, 0)
-	for _, service := range names {
-		fileDescs, err := stream.FileContainingSymbol(service)
+	for _, service := range listServices {
+		desc, err := client.FileContainingSymbol(service)
 		if err != nil {
 			return
 		}
 
-		l := len(fileDescs)
-		if l == 0 {
-			continue
+		fileDesc := desc.UnwrapFile()
+		if err = protoregistry.GlobalFiles.RegisterFile(fileDesc); err != nil {
+			log.Err(err).Msg("could not register given files")
+			return
 		}
 
-		for i := l - 1; i >= 0; i-- {
-			desc := fileDescs[i]
-			file, err := protodesc.NewFile(desc, protoregistry.GlobalFiles)
-			if err != nil {
-				log.Err(err).Msg("could not create file")
-				return
-			}
+		svcDescs := fileDesc.Services()
+		for i := 0; i < svcDescs.Len(); i++ {
+			svc := vanguard.NewServiceWithSchema(
+				svcDescs.Get(i),
+				proxy,
+				svcOpts...,
+			)
 
-			if err = protoregistry.GlobalFiles.RegisterFile(file); err != nil {
-				log.Err(err).Msg("could not register given files")
-				return
-			}
-
-			svcDescs := file.Services()
-			for i := 0; i < svcDescs.Len(); i++ {
-				svc := vanguard.NewServiceWithSchema(
-					svcDescs.Get(i),
-					proxy,
-					svcOpts...,
-				)
-
-				services = append(services, svc)
-			}
+			services = append(services, svc)
 		}
 
 	}
